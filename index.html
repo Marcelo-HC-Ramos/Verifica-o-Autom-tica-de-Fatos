@@ -188,7 +188,7 @@
   </section>
 
   <details>
-    <summary>Ver a base local de evidências (7 fatos)</summary>
+    <summary id="resumoBase">Ver a base local de evidências</summary>
     <ul id="base"></ul>
   </details>
 
@@ -198,13 +198,59 @@
 <script>
   // ---------- Base local (verificação rápida, sem internet) ----------
   const BASE = [
+    // Brasil
     "A capital do Brasil é Brasília.",
     "O Brasil tem 26 estados e um Distrito Federal.",
     "O rio Amazonas é o maior rio do mundo em volume de água.",
     "A Constituição brasileira atual foi promulgada em 1988.",
     "A Copa do Mundo de 2002 foi vencida pelo Brasil.",
     "O Brasil proclamou a independência em 1822.",
-    "A língua oficial do Brasil é o português."
+    "A língua oficial do Brasil é o português.",
+    "O Brasil faz fronteira com 10 países.",
+    "A capital da Argentina é Buenos Aires.",
+    "O Brasil é o maior país da América do Sul em área.",
+    // Capitais
+    "A capital da França é Paris.",
+    "A capital do Japão é Tóquio.",
+    "A capital de Portugal é Lisboa.",
+    "A capital da Alemanha é Berlim.",
+    "A capital do Canadá é Ottawa.",
+    "A capital da Austrália é Canberra.",
+    // Mundo e geografia
+    "O monte Everest é a montanha mais alta do mundo.",
+    "O oceano Pacífico é o maior oceano do mundo.",
+    "A Rússia é o maior país do mundo em área.",
+    "O Egito fica no continente africano.",
+    "A Antártida é o continente mais frio do planeta.",
+    "A torre Eiffel fica em Paris.",
+    // Ciência
+    "A água ferve a 100 graus Celsius ao nível do mar.",
+    "A água congela a 0 graus Celsius ao nível do mar.",
+    "A fórmula química da água é H2O.",
+    "O símbolo químico do ouro é Au.",
+    "A Terra gira em torno do Sol.",
+    "A Lua é o único satélite natural da Terra.",
+    "Júpiter é o maior planeta do Sistema Solar.",
+    "A Terra é o terceiro planeta a partir do Sol.",
+    "A velocidade da luz no vácuo é de cerca de 300 mil quilômetros por segundo.",
+    "O número pi é aproximadamente 3,14.",
+    "O corpo humano adulto tem 206 ossos.",
+    "O ser humano tem 2 pulmões.",
+    // Tempo e matemática
+    "Um ano comum tem 365 dias.",
+    "Uma semana tem 7 dias.",
+    "Um dia tem 24 horas.",
+    "Uma hora tem 60 minutos.",
+    "Um triângulo tem 3 lados.",
+    "Um quadrado tem 4 lados.",
+    "A soma dos ângulos internos de um triângulo é 180 graus.",
+    // História e cultura
+    "A Segunda Guerra Mundial terminou em 1945.",
+    "O ser humano pisou na Lua pela primeira vez em 1969.",
+    "A Revolução Francesa começou em 1789.",
+    "Leonardo da Vinci pintou a Mona Lisa.",
+    "William Shakespeare escreveu a peça Romeu e Julieta.",
+    "O Brasil é uma república federativa."
   ];
 
   const EXEMPLOS = [
@@ -453,6 +499,9 @@
     });
     exemplosEl.appendChild(b);
   });
+
+  document.getElementById("resumoBase").textContent =
+    `Ver a base local de evidências (${BASE.length} fatos)`;
 
   const baseEl = document.getElementById("base");
   BASE.forEach(f => {
