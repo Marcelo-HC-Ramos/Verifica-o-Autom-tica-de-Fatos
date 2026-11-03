@@ -5,7 +5,7 @@ automaticamente afirmações factuais contra uma base de evidências.
 
 ## Como funciona
 
-1. **Base de evidências:** lista de fatos verificáveis (capitais, populações, datas).
+1. **Base de evidências:** 47 fatos verificáveis (capitais, geografia, ciência, datas).
 2. **Recuperação:** encontra o fato mais parecido com a afirmação, por sobreposição de palavras
    (sem acentos e sem stopwords).
 3. **Veredito:**
@@ -29,7 +29,7 @@ python3 verificador_fatos.py "O Brasil tem 27 estados."       # verifica uma afi
 - Negações e trocas de palavra não são entendidas ("Rio de Janeiro" contra "Brasília"
   retorna "sem evidência suficiente", não "refutada").
 - Escalas não são convertidas ("12 milhões" e "12 mil" são tratados como números diferentes).
-- A base tem apenas 8 fatos.
+- A base local tem 47 fatos gerais; fatos fora dela não são verificados pelo terminal.
 
 ## Próximos passos
 
