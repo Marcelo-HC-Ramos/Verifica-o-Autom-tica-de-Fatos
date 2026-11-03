@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Verificador de Fatos em PLN</title>
+<style>
+  :root {
+    --navy: #1e2761;
+    --ice: #cadcfc;
+    --ink: #1e2761;
+    --muted: #5a6478;
+    --card: #eef2fa;
+    --line: #d0d7e5;
+    --verde: #2e7d32;
+    --vermelho: #c62828;
+    --cinza: #616161;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: Calibri, Arial, sans-serif;
+    background: var(--navy);
+    color: var(--ink);
+    min-height: 100vh;
+  }
+  main {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 48px 20px 60px;
+  }
+  header h1 {
+    color: #fff;
+    font-size: 40px;
+    margin: 0 0 8px;
+  }
+  header p {
+    color: var(--ice);
+    font-size: 18px;
+    margin: 0 0 32px;
+  }
+  .painel {
+    background: #fff;
+    border-radius: 14px;
+    padding: 28px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  }
+  label {
+    font-size: 16px;
+    font-weight: bold;
+    display: block;
+    margin-bottom: 10px;
+  }
+  .entrada {
+    display: flex;
+    gap: 10px;
+  }
+  input[type="text"] {
+    flex: 1;
+    font-size: 18px;
+    font-family: inherit;
+    padding: 14px 16px;
+    border: 2px solid var(--line);
+    border-radius: 10px;
+    color: var(--ink);
+  }
+  input[type="text"]:focus {
+    outline: none;
+    border-color: var(--navy);
+  }
+  button.verificar {
+    font-size: 18px;
+    font-family: inherit;
+    font-weight: bold;
+    padding: 14px 24px;
+    border: none;
+    border-radius: 10px;
+    background: var(--navy);
+    color: #fff;
+    cursor: pointer;
+  }
+  button.verificar:hover { background: #2b3a80; }
+  .exemplos {
+    margin-top: 18px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .exemplos button {
+    font-family: inherit;
+    font-size: 14px;
+    padding: 8px 12px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--card);
+    color: var(--ink);
+    cursor: pointer;
+    text-align: left;
+  }
+  .exemplos button:hover { border-color: var(--navy); }
+  .resultado {
+    margin-top: 26px;
+    border-top: 1px solid var(--line);
+    padding-top: 22px;
+    min-height: 120px;
+  }
+  .veredito {
+    display: inline-block;
+    font-size: 22px;
+    font-weight: bold;
+    color: #fff;
+    padding: 8px 18px;
+    border-radius: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .veredito.apoiada { background: var(--verde); }
+  .veredito.refutada { background: var(--vermelho); }
+  .veredito.sem { background: var(--cinza); }
+  .detalhe {
+    margin-top: 16px;
+    font-size: 16px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .detalhe strong { color: var(--ink); }
+  .vazio {
+    color: var(--muted);
+    font-size: 16px;
+  }
+  .numeros {
+    margin-top: 10px;
+    font-family: "Courier New", monospace;
+    font-size: 14px;
+    background: var(--card);
+    padding: 10px 12px;
+    border-radius: 8px;
+    color: var(--ink);
+  }
+  details {
+    margin-top: 28px;
+    color: var(--ice);
+    font-size: 16px;
+  }
+  details summary {
+    cursor: pointer;
+    font-weight: bold;
+  }
+  details ul {
+    padding-left: 20px;
+    line-height: 1.7;
+  }
+  footer {
+    margin-top: 28px;
+    color: var(--ice);
+    font-size: 14px;
+    font-family: "Courier New", monospace;
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Verificador de Fatos em PLN</h1>
+    <p>Digite uma afirmação factual em português e veja se ela bate com a base de evidências.</p>
+  </header>
+
+  <section class="painel">
+    <label for="afirmacao">Afirmação</label>
+    <form id="form" class="entrada" autocomplete="off">
+      <input type="text" id="afirmacao" placeholder="Ex.: O Brasil tem 27 estados." required>
+      <button type="submit" class="verificar">Verificar</button>
+    </form>
+
+    <div class="exemplos" id="exemplos"></div>
+
+    <div class="resultado" id="resultado">
+      <p class="vazio">Digite uma afirmação ou escolha um exemplo acima.</p>
+    </div>
+  </section>
+
+  <details>
+    <summary>Ver a base de evidências (8 fatos)</summary>
+    <ul id="base"></ul>
+  </details>
+
+  <footer>Processamento de Linguagem Natural · sem servidor, roda no navegador</footer>
+</main>
+
+<script>
+  // Base de evidências: mesma do verificador_fatos.py
+  const BASE = [
+    "A capital do Brasil é Brasília.",
+    "A cidade de São Paulo tem cerca de 11,4 milhões de habitantes.",
+    "O Brasil tem 26 estados e um Distrito Federal.",
+    "O rio Amazonas é o maior rio do mundo em volume de água.",
+    "A Constituição brasileira atual foi promulgada em 1988.",
+    "A Copa do Mundo de 2002 foi vencida pelo Brasil.",
+    "O Brasil proclamou a independência em 1822.",
+    "A língua oficial do Brasil é o português."
+  ];
+
+  const EXEMPLOS = [
+    "Brasília é a capital do Brasil.",
+    "O Brasil tem 27 estados.",
+    "O Brasil conquistou a Copa do Mundo de 2002.",
+    "A Alemanha é o país mais populoso da Europa.",
+    "A cidade de São Paulo tem 12 milhões de habitantes."
+  ];
+
+  function normalizar(texto) {
+    return texto.toLowerCase().normalize("NFD").replace(/\p{Mn}/gu, "");
+  }
+
+  const STOPWORDS = new Set(normalizar(
+    "a o as os de da do das dos e em no na nos nas um uma uns umas que é foi são ser " +
+    "tem têm por para com se ao aos à às mais seu sua seus suas pelo pela"
+  ).split(/\s+/));
+
+  function tokens(texto) {
+    const palavras = normalizar(texto).match(/[a-z0-9]+/g) || [];
+    return new Set(palavras.filter(p => !STOPWORDS.has(p)));
+  }
+
+  function numeros(texto) {
+    // Remove separador de milhar: "2.000" vira "2000"
+    return new Set(texto.replace(/\./g, "").match(/\d+/g) || []);
+  }
+
+  function recuperar(afirmacao, base) {
+    const ta = tokens(afirmacao);
+    if (ta.size === 0) return { fato: null, score: 0 };
+    let melhor = null, melhorScore = 0;
+    for (const fato of base) {
+      const tf = tokens(fato);
+      let comum = 0;
+      for (const t of ta) if (tf.has(t)) comum++;
+      const score = comum / ta.size;
+      if (score > melhorScore) { melhor = fato; melhorScore = score; }
+    }
+    return { fato: melhor, score: melhorScore };
+  }
+
+  function verificar(afirmacao, base, limiar = 0.5) {
+    const { fato, score } = recuperar(afirmacao, base);
+    if (fato === null || score < limiar) {
+      return { veredito: "sem evidência suficiente", fato: null, score, na: null, nf: null };
+    }
+    const na = numeros(afirmacao), nf = numeros(fato);
+    let veredito;
+    if (na.size > 0) {
+      // Todos os números da afirmação precisam aparecer no fato
+      const todos = [...na].every(n => nf.has(n));
+      veredito = todos ? "apoiada" : "refutada";
+    } else {
+      // Sem números: só aceita se quase todas as palavras batem
+      veredito = score >= 0.8 ? "apoiada" : "sem evidência suficiente";
+    }
+    return { veredito, fato, score, na, nf };
+  }
+
+  const resultadoEl = document.getElementById("resultado");
+  const inputEl = document.getElementById("afirmacao");
+
+  function mostrar(afirmacao) {
+    const r = verificar(afirmacao, BASE);
+    const classe = r.veredito === "apoiada" ? "apoiada"
+                 : r.veredito === "refutada" ? "refutada" : "sem";
+    const rotulo = r.veredito.toUpperCase();
+
+    let html = `<span class="veredito ${classe}">${rotulo}</span>`;
+    if (r.fato) {
+      html += `<div class="detalhe"><strong>Evidência usada</strong> (semelhança ${r.score.toFixed(2).replace(".", ",")}):<br>${escapar(r.fato)}</div>`;
+      if (r.na && r.na.size > 0) {
+        const lista = [...r.na].join(", ") || "—";
+        html += `<div class="numeros">Números da afirmação: {${lista}}<br>Números do fato: {${[...r.nf].join(", ")}}</div>`;
+      }
+    } else {
+      html += `<div class="detalhe">Nenhum fato da base é parecido o bastante com esta afirmação (semelhança abaixo de 50%).</div>`;
+    }
+    resultadoEl.innerHTML = html;
+  }
+
+  function escapar(t) {
+    return t.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  document.getElementById("form").addEventListener("submit", e => {
+    e.preventDefault();
+    const texto = inputEl.value.trim();
+    if (texto) mostrar(texto);
+  });
+
+  const exemplosEl = document.getElementById("exemplos");
+  EXEMPLOS.forEach(ex => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = ex;
+    b.addEventListener("click", () => {
+      inputEl.value = ex;
+      mostrar(ex);
+    });
+    exemplosEl.appendChild(b);
+  });
+
+  const baseEl = document.getElementById("base");
+  BASE.forEach(f => {
+    const li = document.createElement("li");
+    li.textContent = f;
+    baseEl.appendChild(li);
+  });
+</script>
+</body>
+</html>
