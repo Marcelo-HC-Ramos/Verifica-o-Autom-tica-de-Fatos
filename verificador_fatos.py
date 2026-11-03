@@ -122,5 +122,26 @@ def main():
     print(f"\nAcurácia: {acertos}/{total} = {acertos / total:.0%}")
 
 
+def modo_interativo():
+    """Digite afirmações uma a uma. Linha vazia encerra."""
+    print("Verificador de fatos. Digite uma afirmação (linha vazia encerra).\n")
+    while True:
+        try:
+            afirmacao = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not afirmacao:
+            break
+        veredito, fato, score = verificar(afirmacao, BASE_EVIDENCIAS)
+        print(f"  Veredito: {veredito.upper()}")
+        if fato:
+            print(f"  Evidência ({score:.2f}): {fato}")
+        print()
+
+
 if __name__ == "__main__":
-    main()
+    if sys.argv[1:] == ["--interativo"]:
+        modo_interativo()
+    else:
+        main()
