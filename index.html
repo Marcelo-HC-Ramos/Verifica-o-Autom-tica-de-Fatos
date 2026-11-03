@@ -80,6 +80,7 @@
     cursor: pointer;
   }
   button.verificar:hover { background: #2b3a80; }
+  button.verificar:disabled { background: var(--cinza); cursor: wait; }
   .exemplos {
     margin-top: 18px;
     display: flex;
@@ -124,6 +125,7 @@
     line-height: 1.5;
   }
   .detalhe strong { color: var(--ink); }
+  .detalhe a { color: var(--navy); }
   .vazio {
     color: var(--muted);
     font-size: 16px;
@@ -136,6 +138,12 @@
     padding: 10px 12px;
     border-radius: 8px;
     color: var(--ink);
+  }
+  .aviso {
+    margin-top: 14px;
+    font-size: 14px;
+    color: var(--muted);
+    font-style: italic;
   }
   details {
     margin-top: 28px;
@@ -162,14 +170,14 @@
 <main>
   <header>
     <h1>Verificador de Fatos em PLN</h1>
-    <p>Digite uma afirmação factual em português e veja se ela bate com a base de evidências.</p>
+    <p>Digite qualquer afirmação factual em português e veja se ela bate com as evidências.</p>
   </header>
 
   <section class="painel">
     <label for="afirmacao">Afirmação</label>
     <form id="form" class="entrada" autocomplete="off">
       <input type="text" id="afirmacao" placeholder="Ex.: O Brasil tem 27 estados." required>
-      <button type="submit" class="verificar">Verificar</button>
+      <button type="submit" class="verificar" id="botao">Verificar</button>
     </form>
 
     <div class="exemplos" id="exemplos"></div>
@@ -180,18 +188,17 @@
   </section>
 
   <details>
-    <summary>Ver a base de evidências (8 fatos)</summary>
+    <summary>Ver a base local de evidências (7 fatos)</summary>
     <ul id="base"></ul>
   </details>
 
-  <footer>Processamento de Linguagem Natural · sem servidor, roda no navegador</footer>
+  <footer>Processamento de Linguagem Natural · base local + Wikipédia (pt)</footer>
 </main>
 
 <script>
-  // Base de evidências: mesma do verificador_fatos.py
+  // ---------- Base local (verificação rápida, sem internet) ----------
   const BASE = [
     "A capital do Brasil é Brasília.",
-    "A cidade de São Paulo tem cerca de 11,4 milhões de habitantes.",
     "O Brasil tem 26 estados e um Distrito Federal.",
     "O rio Amazonas é o maior rio do mundo em volume de água.",
     "A Constituição brasileira atual foi promulgada em 1988.",
@@ -205,9 +212,14 @@
     "O Brasil tem 27 estados.",
     "O Brasil conquistou a Copa do Mundo de 2002.",
     "A Alemanha é o país mais populoso da Europa.",
-    "A cidade de São Paulo tem 12 milhões de habitantes."
+    "A cidade de São Paulo tem 12 milhões de habitantes.",
+    "O Pará tem área maior que a Bahia."
   ];
 
+  const WIKI_API = "https://pt.wikipedia.org/w/api.php";
+  const WIKI_PAGINA = "https://pt.wikipedia.org/wiki/";
+
+  // ---------- Texto e tokens ----------
   function normalizar(texto) {
     return texto.toLowerCase().normalize("NFD").replace(/\p{Mn}/gu, "");
   }
@@ -222,67 +234,206 @@
     return new Set(palavras.filter(p => !STOPWORDS.has(p)));
   }
 
-  function numeros(texto) {
-    // Remove separador de milhar: "2.000" vira "2000"
-    return new Set(texto.replace(/\./g, "").match(/\d+/g) || []);
+  // ---------- Números (com escala: "12 milhões", "12.396.372", "11,4 milhões") ----------
+  const ESCALAS = { mil: 1e3, milhao: 1e6, milhoes: 1e6, bilhao: 1e9, bilhoes: 1e9 };
+
+  function prepararNumeros(texto) {
+    // Une grupos de milhar separados por espaço: "12 396 372" -> "12396372"
+    return texto.replace(/(\d)[\s  ](?=\d{3}(?!\d))/g, "$1");
   }
 
-  function recuperar(afirmacao, base) {
+  function extrairNumeros(texto) {
+    const t = prepararNumeros(texto);
+    const re = /(\d+(?:[.,]\d+)*)(?:\s*(milh[õo]es|milh[ãa]o|bilh[õo]es|bilh[ãa]o|mil)\b)?/gi;
+    const achados = [];
+    let m;
+    while ((m = re.exec(t)) !== null) {
+      let s = m[1];
+      if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, "");   // 12.396.372
+      else if (s.includes(",")) s = s.replace(/\./g, "").replace(",", "."); // 11,4
+      let valor = parseFloat(s);
+      const escala = m[2] ? ESCALAS[normalizar(m[2])] : undefined;
+      // Casas decimais escritas: "11,4" tem 1; "12" tem 0
+      const casas = (s.split(".")[1] || "").length;
+      let unidade = 1;
+      if (escala) {
+        valor *= escala;
+        unidade = Math.pow(10, -casas) * escala;
+      }
+      if (!isNaN(valor)) achados.push({ valor, escala: !!escala, unidade });
+    }
+    return achados;
+  }
+
+  function numeroBate(afirmado, encontrado) {
+    // Sem escala (anos, contagens): tem que ser exatamente igual
+    if (!afirmado.escala) return afirmado.valor === encontrado.valor;
+    // Com escala: vale o arredondamento do que foi escrito.
+    // "12 milhões" aceita de 11,5 a 12,5 milhões; "11,4 milhões" aceita de 11,35 a 11,45.
+    const meio = afirmado.unidade / 2;
+    return encontrado.valor >= afirmado.valor - meio && encontrado.valor < afirmado.valor + meio;
+  }
+
+  // ---------- Veredito ----------
+  function julgar(afirmacao, evidencia, score) {
+    const na = extrairNumeros(afirmacao);
+    const nf = extrairNumeros(evidencia);
+    if (na.length > 0) {
+      // Sem números na evidência, não dá para confirmar nem refutar
+      if (nf.length === 0) return "sem evidência suficiente";
+      const todos = na.every(v => nf.some(n => numeroBate(v, n)));
+      return todos ? "apoiada" : "refutada";
+    }
+    // Sem números: só aceita se quase todas as palavras batem
+    return score >= 0.8 ? "apoiada" : "sem evidência suficiente";
+  }
+
+  function escorar(afirmacao, texto) {
     const ta = tokens(afirmacao);
-    if (ta.size === 0) return { fato: null, score: 0 };
+    if (ta.size === 0) return 0;
+    const tt = tokens(texto);
+    let comum = 0;
+    for (const t of ta) if (tt.has(t)) comum++;
+    return comum / ta.size;
+  }
+
+  // ---------- Etapa 1: base local ----------
+  function verificarLocal(afirmacao) {
     let melhor = null, melhorScore = 0;
-    for (const fato of base) {
-      const tf = tokens(fato);
-      let comum = 0;
-      for (const t of ta) if (tf.has(t)) comum++;
-      const score = comum / ta.size;
+    for (const fato of BASE) {
+      const score = escorar(afirmacao, fato);
       if (score > melhorScore) { melhor = fato; melhorScore = score; }
     }
-    return { fato: melhor, score: melhorScore };
+    if (!melhor || melhorScore < 0.5) return null;
+    return { veredito: julgar(afirmacao, melhor, melhorScore), frase: melhor, score: melhorScore, fonte: "base local" };
   }
 
-  function verificar(afirmacao, base, limiar = 0.5) {
-    const { fato, score } = recuperar(afirmacao, base);
-    if (fato === null || score < limiar) {
-      return { veredito: "sem evidência suficiente", fato: null, score, na: null, nf: null };
-    }
-    const na = numeros(afirmacao), nf = numeros(fato);
-    let veredito;
-    if (na.size > 0) {
-      // Todos os números da afirmação precisam aparecer no fato
-      const todos = [...na].every(n => nf.has(n));
-      veredito = todos ? "apoiada" : "refutada";
-    } else {
-      // Sem números: só aceita se quase todas as palavras batem
-      veredito = score >= 0.8 ? "apoiada" : "sem evidência suficiente";
-    }
-    return { veredito, fato, score, na, nf };
+  // ---------- Etapa 2: Wikipédia ----------
+  const CAPITAL = /^\p{Lu}/u;
+
+  function consultasDeBusca(afirmacao) {
+    const palavras = afirmacao.replace(/[.,!?;:()"“”]/g, " ").split(/\s+/).filter(p => p);
+    const conteudo = palavras.filter(p => !STOPWORDS.has(normalizar(p)));
+    const consultas = [conteudo.slice(0, 6).join(" ")];
+    // Nomes próprios (exceto a primeira palavra da frase) costumam ser o tema central
+    const proprios = palavras.filter((p, i) => i > 0 && CAPITAL.test(p));
+    if (proprios.length) consultas.push(proprios.join(" "));
+    return [...new Set(consultas)].filter(q => q.length > 1);
   }
 
+  async function chamarWiki(params) {
+    const url = new URL(WIKI_API);
+    Object.entries({ format: "json", origin: "*", ...params }).forEach(([k, v]) => url.searchParams.set(k, v));
+    const r = await fetch(url);
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  }
+
+  async function pesquisarWiki(consulta) {
+    const j = await chamarWiki({ action: "query", list: "search", srsearch: consulta, srlimit: 3 });
+    return (j.query?.search || []).map(x => x.title);
+  }
+
+  async function baixarTextoWiki(titulo) {
+    // Um título por vez: extratos completos não aceitam vários títulos juntos
+    const j = await chamarWiki({ action: "query", prop: "extracts", explaintext: 1, redirects: 1, titles: titulo });
+    const paginas = Object.values(j.query?.pages || {});
+    return paginas.filter(p => p.extract).map(p => ({ titulo: p.title, texto: p.extract }));
+  }
+
+  function melhorFrase(afirmacao, textos) {
+    let melhor = null;
+    for (const { titulo, texto } of textos) {
+      const frases = texto.split(/(?<=[.!?])\s+|\n+/)
+        .map(f => f.trim())
+        .filter(f => f.length > 20 && f.length < 400);
+      for (const f of frases) {
+        // A frase precisa ter pelo menos algum termo da afirmação...
+        const scoreFrase = escorar(afirmacao, f);
+        if (scoreFrase < 0.2) continue;
+        // ...mas a escolha considera também o título do artigo ("São Paulo (cidade)")
+        const score = escorar(afirmacao, titulo + " " + f);
+        if (!melhor || score > melhor.score) melhor = { frase: f, score, scoreFrase, titulo };
+      }
+    }
+    return melhor;
+  }
+
+  async function verificarWikipedia(afirmacao) {
+    let titulos = [];
+    for (const consulta of consultasDeBusca(afirmacao)) {
+      titulos = await pesquisarWiki(consulta);
+      if (titulos.length) break;
+    }
+    if (titulos.length === 0) {
+      return { veredito: "sem evidência suficiente", fonte: "Wikipédia", motivo: "nenhum artigo encontrado" };
+    }
+    const textos = (await Promise.all(titulos.map(baixarTextoWiki))).flat();
+    const melhor = melhorFrase(afirmacao, textos);
+    if (!melhor || melhor.score < 0.5) {
+      return { veredito: "sem evidência suficiente", fonte: "Wikipédia", motivo: "nenhuma frase parecida nos artigos" };
+    }
+    return {
+      veredito: julgar(afirmacao, melhor.frase, melhor.scoreFrase),
+      frase: melhor.frase,
+      score: melhor.scoreFrase,
+      fonte: "Wikipédia",
+      titulo: melhor.titulo,
+      url: WIKI_PAGINA + encodeURIComponent(melhor.titulo.replace(/ /g, "_"))
+    };
+  }
+
+  // ---------- Pipeline: base local primeiro, depois Wikipédia ----------
+  async function verificarQualquer(afirmacao) {
+    const local = verificarLocal(afirmacao);
+    if (local && local.veredito !== "sem evidência suficiente") return local;
+    try {
+      return await verificarWikipedia(afirmacao);
+    } catch (e) {
+      return { veredito: "sem evidência suficiente", fonte: "Wikipédia", erro: true };
+    }
+  }
+
+  // ---------- Interface ----------
   const resultadoEl = document.getElementById("resultado");
   const inputEl = document.getElementById("afirmacao");
+  const botaoEl = document.getElementById("botao");
 
-  function mostrar(afirmacao) {
-    const r = verificar(afirmacao, BASE);
+  function escapar(t) {
+    return t.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function renderizar(r) {
     const classe = r.veredito === "apoiada" ? "apoiada"
                  : r.veredito === "refutada" ? "refutada" : "sem";
-    const rotulo = r.veredito.toUpperCase();
+    let html = `<span class="veredito ${classe}">${r.veredito.toUpperCase()}</span>`;
 
-    let html = `<span class="veredito ${classe}">${rotulo}</span>`;
-    if (r.fato) {
-      html += `<div class="detalhe"><strong>Evidência usada</strong> (semelhança ${r.score.toFixed(2).replace(".", ",")}):<br>${escapar(r.fato)}</div>`;
-      if (r.na && r.na.size > 0) {
-        const lista = [...r.na].join(", ") || "—";
-        html += `<div class="numeros">Números da afirmação: {${lista}}<br>Números do fato: {${[...r.nf].join(", ")}}</div>`;
+    if (r.frase) {
+      const fonte = r.url
+        ? `Wikipédia: <a href="${r.url}" target="_blank" rel="noopener">${escapar(r.titulo)}</a>`
+        : "base local";
+      html += `<div class="detalhe"><strong>Evidência</strong> (${fonte}, semelhança ${r.score.toFixed(2).replace(".", ",")}):<br>${escapar(r.frase)}</div>`;
+      if (r.url) {
+        html += `<div class="aviso">A checagem é automática: confira a frase na fonte antes de concluir.</div>`;
       }
+    } else if (r.erro) {
+      html += `<div class="detalhe">Não consegui consultar a Wikipédia. Verifique a conexão e tente de novo.</div>`;
+    } else if (r.motivo) {
+      html += `<div class="detalhe">Consultei a Wikipédia, mas ${r.motivo}. Nenhuma evidência confiável para esta afirmação.</div>`;
     } else {
-      html += `<div class="detalhe">Nenhum fato da base é parecido o bastante com esta afirmação (semelhança abaixo de 50%).</div>`;
+      html += `<div class="detalhe">Nenhuma evidência encontrada para esta afirmação.</div>`;
     }
     resultadoEl.innerHTML = html;
   }
 
-  function escapar(t) {
-    return t.replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  async function mostrar(afirmacao) {
+    botaoEl.disabled = true;
+    resultadoEl.innerHTML = `<p class="vazio">Consultando as evidências…</p>`;
+    try {
+      renderizar(await verificarQualquer(afirmacao));
+    } finally {
+      botaoEl.disabled = false;
+    }
   }
 
   document.getElementById("form").addEventListener("submit", e => {
