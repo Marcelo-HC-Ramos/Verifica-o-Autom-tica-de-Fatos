@@ -207,7 +207,7 @@
     "A capital do estado de São Paulo é a cidade de São Paulo.",
     "O Brasil tem 26 estados e um Distrito Federal.",
     "O rio Amazonas é o maior rio do mundo em volume de água.",
-    "A Constituição brasileira atual foi promulgada em 1988.",
+    "A Constituição brasileira foi promulgada em 1988.",
     "A Copa do Mundo de 2002 foi vencida pelo Brasil.",
     "O Brasil proclamou a independência em 1822.",
     "A língua oficial do Brasil é o português.",
@@ -494,8 +494,60 @@
     };
   }
 
-  // ---------- Pipeline: base local primeiro, depois Wikipédia ----------
+  // ---------- Etapa 0: Google Fact Check Tools (checagens publicadas, com data e agência) ----------
+  // Cole aqui a chave de API restrita ao domínio do site (ver instruções no README).
+  // Enquanto estiver vazia, esta etapa é pulada.
+  const GOOGLE_FACT_CHECK_KEY = "";
+  const FACT_CHECK_API = "https://factchecktools.googleapis.com/v1alpha1/claims:search";
+
+  // Converte a nota textual da agência em veredito. Só casos claros viram apoiada ou refutada.
+  function notaParaVeredito(nota) {
+    const n = normalizar(nota || "");
+    if (/falso|mentira|enganos|distorc|impreciso|nao e verdade|fake|incorret/.test(n)) return "refutada";
+    if (/verdadeir|correto|exato/.test(n)) return "apoiada";
+    return "sem evidência suficiente";
+  }
+
+  function escolherRevisao(afirmacao, json) {
+    const candidatas = [];
+    for (const c of json.claims || []) {
+      // A checagem precisa tratar da mesma afirmação, não de algo parecido
+      const mesma = escorar(afirmacao, c.text || "") >= 0.8 && escorar(c.text || "", afirmacao) >= 0.8;
+      if (!mesma) continue;
+      for (const rv of c.claimReview || []) {
+        candidatas.push({
+          texto: c.text, nota: rv.textualRating, agencia: rv.publisher?.name,
+          url: rv.url, data: rv.reviewDate
+        });
+      }
+    }
+    // Entre as checagens da mesma afirmação, a mais recente
+    candidatas.sort((a, b) => (b.data || "").localeCompare(a.data || ""));
+    return candidatas[0] || null;
+  }
+
+  async function verificarFactCheck(afirmacao) {
+    if (!GOOGLE_FACT_CHECK_KEY) return null;
+    const url = new URL(FACT_CHECK_API);
+    url.searchParams.set("query", afirmacao);
+    url.searchParams.set("languageCode", "pt-BR");
+    url.searchParams.set("key", GOOGLE_FACT_CHECK_KEY);
+    const r = await fetch(url);
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const rev = escolherRevisao(afirmacao, await r.json());
+    if (!rev) return null;
+    const veredito = notaParaVeredito(rev.nota);
+    return { veredito, frase: rev.texto, nota: rev.nota, agencia: rev.agencia, url: rev.url, data: rev.data, fonte: "Google Fact Check" };
+  }
+
+  // ---------- Pipeline: checagem publicada, base local e, por último, Wikipédia ----------
   async function verificarQualquer(afirmacao) {
+    try {
+      const checagem = await verificarFactCheck(afirmacao);
+      if (checagem && checagem.veredito !== "sem evidência suficiente") return checagem;
+    } catch (e) {
+      // Falha na API do Google não deve impedir as outras etapas
+    }
     const local = verificarLocal(afirmacao);
     if (local && local.veredito !== "sem evidência suficiente") return local;
     try {
@@ -519,7 +571,13 @@
                  : r.veredito === "refutada" ? "refutada" : "sem";
     let html = `<span class="veredito ${classe}">${r.veredito.toUpperCase()}</span>`;
 
-    if (r.frase) {
+    if (r.fonte === "Google Fact Check") {
+      const data = r.data ? new Date(r.data).toLocaleDateString("pt-BR") : "data não informada";
+      html += `<div class="detalhe"><strong>Checagem publicada</strong> por ${escapar(r.agencia || "agência não informada")} em ${data}, com a nota “${escapar(r.nota || "")}”:<br>${escapar(r.frase)}</div>`;
+      if (r.url) {
+        html += `<div class="detalhe"><a href="${r.url}" target="_blank" rel="noopener">Ler a checagem completa</a></div>`;
+      }
+    } else if (r.frase) {
       const fonte = r.url
         ? `Wikipédia: <a href="${r.url}" target="_blank" rel="noopener">${escapar(r.titulo)}</a>`
         : "base local";
