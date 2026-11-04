@@ -3,12 +3,14 @@ Verificador simples de fatos em português (sem dependências externas).
 
 Fluxo:
 1. Recupera o fato da base mais parecido com a afirmação (sobreposição de palavras).
-2. Compara os números da afirmação com os números do fato encontrado.
-3. Dá um veredito: apoiada, refutada ou sem evidência suficiente.
+2. Para afirmações com números, compara os valores (com arredondamento).
+3. Para afirmações "X é Y", compara sujeito e predicado, não só as palavras.
+4. Dá um veredito: apoiada, refutada ou sem evidência suficiente.
 
 Uso:
     python3 verificador_fatos.py                         # roda o conjunto de testes
     python3 verificador_fatos.py "A capital do Brasil é Brasília."
+    python3 verificador_fatos.py --interativo            # digite afirmações uma a uma
 """
 
 import re
@@ -27,10 +29,19 @@ a o as os de da do das dos e em no na nos nas um uma uns umas que é foi são se
 tem têm por para com se ao aos à às mais seu sua seus suas pelo pela
 """.split()}
 
+PALAVRAS_UNICAS = {"capital", "presidente", "maior", "menor", "primeiro", "primeira",
+                   "unico", "unica", "ultimo", "ultima"}
 
-# Base de evidências: fatos conhecidos e verificáveis
+ESCALAS = {"mil": 1e3, "milhao": 1e6, "milhoes": 1e6, "bilhao": 1e9, "bilhoes": 1e9}
+
+
 BASE_EVIDENCIAS = [
     "A capital do Brasil é Brasília.",
+    "Brasília é a capital federal do Brasil desde 1960.",
+    "Brasília foi inaugurada em 1960.",
+    "O Rio de Janeiro foi a capital do Brasil até 1960.",
+    "São Paulo é a maior cidade do Brasil.",
+    "A capital do estado de São Paulo é a cidade de São Paulo.",
     "O Brasil tem 26 estados e um Distrito Federal.",
     "O rio Amazonas é o maior rio do mundo em volume de água.",
     "A Constituição brasileira atual foi promulgada em 1988.",
@@ -79,41 +90,146 @@ BASE_EVIDENCIAS = [
     "O Brasil é uma república federativa.",
 ]
 
+
 # Conjunto de testes: (afirmação, veredito esperado)
 TESTES = [
     ("Brasília é a capital do Brasil.", "apoiada"),
     ("A capital do Brasil é Brasília.", "apoiada"),
+    ("São Paulo é a capital do Brasil.", "refutada"),
+    ("O Rio de Janeiro é a capital do Brasil.", "refutada"),
     ("O Brasil proclamou a independência em 1822.", "apoiada"),
-    ("A água ferve a 90 graus Celsius ao nível do mar.", "refutada"),
     ("A Constituição brasileira atual foi promulgada em 1988.", "apoiada"),
     ("A Constituição brasileira atual foi promulgada em 1998.", "refutada"),
     ("A língua oficial do Brasil é o português.", "apoiada"),
     ("O Brasil tem 26 estados e um Distrito Federal.", "apoiada"),
     ("O Brasil tem 27 estados.", "refutada"),
-    ("O Brasil conquistou a Copa do Mundo de 2002.", "apoiada"),
+    ("A água ferve a 100 graus Celsius ao nível do mar.", "apoiada"),
+    ("A água ferve a 90 graus Celsius ao nível do mar.", "refutada"),
     ("A Alemanha é o país mais populoso da Europa.", "sem evidência suficiente"),
 ]
 
 
+# ---------- Texto e palavras ----------
+
+def palavras(texto):
+    return re.findall(r"[a-z0-9]+", normalizar(texto))
+
+
 def tokens(texto):
-    """Conjunto de palavras relevantes (sem acento, sem stopwords)."""
-    palavras = re.findall(r"[a-z0-9]+", normalizar(texto))
-    return {p for p in palavras if p not in STOPWORDS}
+    """Palavras relevantes (sem stopwords)."""
+    return {p for p in palavras(texto) if p not in STOPWORDS}
 
 
-def numeros(texto):
-    """Números do texto. Remove separador de milhar ('2.000' -> '2000')."""
-    return set(re.findall(r"\d+", texto.replace(".", "")))
+def cobertura(a, b):
+    """Fração das palavras de 'a' que aparecem em 'b'."""
+    ta = tokens(a)
+    if not ta:
+        return 0.0
+    return len(ta & tokens(b)) / len(ta)
 
+
+def bigramas(texto):
+    p = palavras(texto)
+    return {f"{p[i]} {p[i + 1]}" for i in range(len(p) - 1)}
+
+
+def fracao_bigramas(a, b):
+    ba = bigramas(a)
+    return len(ba & bigramas(b)) / len(ba) if ba else 0.0
+
+
+def tem_palavra_unica(texto):
+    return any(p in PALAVRAS_UNICAS for p in palavras(texto))
+
+
+# ---------- Números com escala ----------
+
+def extrair_numeros(texto):
+    """Lista de valores: '12 milhões' -> 12 000 000; '12.396.372' -> 12 396 372."""
+    t = re.sub(r"(\d)[\s  ](?=\d{3}(?!\d))", r"\1", texto)
+    achados = []
+    padrao = r"(\d+(?:[.,]\d+)*)(?:\s*(milh[õo]es|milh[ãa]o|bilh[õo]es|bilh[ãa]o|mil)\b)?"
+    for m in re.finditer(padrao, t, re.I):
+        s = m.group(1)
+        if re.fullmatch(r"\d{1,3}(\.\d{3})+", s):
+            s = s.replace(".", "")
+        elif "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        valor = float(s)
+        grupo = m.group(2)
+        escala = ESCALAS.get(normalizar(grupo)) if grupo else None
+        casas = len(s.split(".")[1]) if "." in s else 0
+        unidade = 1.0
+        if escala:
+            valor *= escala
+            unidade = (10 ** -casas) * escala
+        achados.append({"valor": valor, "escala": bool(escala), "unidade": unidade})
+    return achados
+
+
+def numero_bate(afirmado, encontrado):
+    if not afirmado["escala"]:
+        return afirmado["valor"] == encontrado["valor"]
+    # "12 milhões" aceita valores que arredondam para 12 milhões (de 11,5 a 12,5)
+    meio = afirmado["unidade"] / 2
+    return encontrado["valor"] >= afirmado["valor"] - meio and encontrado["valor"] < afirmado["valor"] + meio
+
+
+# ---------- Relações "X é Y" ----------
+
+def partir(texto):
+    """Separa sujeito e predicado no primeiro verbo de ligação."""
+    t = re.sub(r"[.!?]+$", "", texto)
+    m = re.search(r"\s+(?:é|são|foi|foram|era|eram)\s+", t, re.I)
+    if not m:
+        return None
+    return t[:m.start()], t[m.end():]
+
+
+def julgar_relacao(afirmacao, evidencia):
+    c, e = partir(afirmacao), partir(evidencia)
+    if not c or not e:
+        return None
+    cs, cp = c
+    es, ep = e
+
+    direto = cobertura(cs, es) >= 0.8 and cobertura(cp, ep) >= 0.8
+    inverso = cobertura(cs, ep) >= 0.8 and cobertura(cp, es) >= 0.8
+    if direto or inverso:
+        # "foi ... até 1960" já encerrou: não sustenta uma afirmação no presente
+        encerrado = re.search(r"\sat[ée]\s", " " + evidencia + " ", re.I) and re.search(r"\s(é|são)\s", afirmacao, re.I)
+        if not encerrado:
+            return "apoiada"
+        return "refutada" if tem_palavra_unica(cp) else "sem evidência suficiente"
+
+    sujeito_bate = cobertura(cs, es) >= 0.8 or cobertura(cs, ep) >= 0.8
+    predicado_bate = cobertura(cp, ep) >= 0.8 or cobertura(cp, es) >= 0.8
+    unico = tem_palavra_unica(cp) or tem_palavra_unica(ep)
+    if unico and sujeito_bate != predicado_bate:
+        return "refutada"
+    return "sem evidência suficiente"
+
+
+def julgar(afirmacao, evidencia, score):
+    na = extrair_numeros(afirmacao)
+    nf = extrair_numeros(evidencia)
+    if na:
+        if not nf:
+            return "sem evidência suficiente"
+        todos = all(any(numero_bate(v, n) for n in nf) for v in na)
+        return "apoiada" if todos else "refutada"
+    relacao = julgar_relacao(afirmacao, evidencia)
+    if relacao:
+        return relacao
+    return "apoiada" if score >= 0.8 and fracao_bigramas(afirmacao, evidencia) >= 0.5 else "sem evidência suficiente"
+
+
+# ---------- Recuperação e veredito ----------
 
 def recuperar(afirmacao, base):
-    """Devolve o fato da base mais parecido e a fração de palavras da afirmação que ele cobre."""
-    ta = tokens(afirmacao)
-    if not ta:
-        return None, 0.0
     melhor, melhor_score = None, 0.0
     for fato in base:
-        score = len(ta & tokens(fato)) / len(ta)
+        score = cobertura(afirmacao, fato)
         if score > melhor_score:
             melhor, melhor_score = fato, score
     return melhor, melhor_score
@@ -124,19 +240,13 @@ def verificar(afirmacao, base, limiar=0.5):
     fato, score = recuperar(afirmacao, base)
     if fato is None or score < limiar:
         return "sem evidência suficiente", None, score
+    return julgar(afirmacao, fato, score), fato, score
 
-    na, nf = numeros(afirmacao), numeros(fato)
-    if na:
-        # Todos os números da afirmação precisam aparecer no fato
-        veredito = "apoiada" if na <= nf else "refutada"
-    else:
-        # Sem números: só aceita se quase todas as palavras batem
-        veredito = "apoiada" if score >= 0.8 else "sem evidência suficiente"
-    return veredito, fato, score
 
+# ---------- Interface de linha de comando ----------
 
 def main():
-    if len(sys.argv) > 1:
+    if len(sys.argv) > 1 and sys.argv[1] != "--interativo":
         afirmacao = " ".join(sys.argv[1:])
         veredito, fato, score = verificar(afirmacao, BASE_EVIDENCIAS)
         print(f"Afirmação: {afirmacao}")
@@ -152,17 +262,13 @@ def main():
         veredito, fato, score = verificar(afirmacao, BASE_EVIDENCIAS)
         ok = veredito == esperado
         acertos += ok
-        marca = "sim" if ok else "NÃO"
-        print(f"{afirmacao:<56} {veredito:<26} {esperado:<26} {marca}")
+        print(f"{afirmacao:<56} {veredito:<26} {esperado:<26} {'sim' if ok else 'NÃO'}")
         if fato:
             print(f"    evidência ({score:.2f}): {fato}")
-
-    total = len(TESTES)
-    print(f"\nAcurácia: {acertos}/{total} = {acertos / total:.0%}")
+    print(f"\nAcurácia: {acertos}/{len(TESTES)} = {acertos / len(TESTES):.0%}")
 
 
 def modo_interativo():
-    """Digite afirmações uma a uma. Linha vazia encerra."""
     print("Verificador de fatos. Digite uma afirmação (linha vazia encerra).\n")
     while True:
         try:

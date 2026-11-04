@@ -200,6 +200,11 @@
   const BASE = [
     // Brasil
     "A capital do Brasil é Brasília.",
+    "Brasília é a capital federal do Brasil desde 1960.",
+    "Brasília foi inaugurada em 1960.",
+    "O Rio de Janeiro foi a capital do Brasil até 1960.",
+    "São Paulo é a maior cidade do Brasil.",
+    "A capital do estado de São Paulo é a cidade de São Paulo.",
     "O Brasil tem 26 estados e um Distrito Federal.",
     "O rio Amazonas é o maior rio do mundo em volume de água.",
     "A Constituição brasileira atual foi promulgada em 1988.",
@@ -321,6 +326,61 @@
   }
 
   // ---------- Veredito ----------
+  // Palavras que indicam algo único: só uma coisa pode ser "a capital"
+  const PALAVRAS_UNICAS = ["capital", "presidente", "maior", "menor", "primeiro", "primeira", "unico", "unica", "ultimo", "ultima"];
+
+  function temPalavraUnica(texto) {
+    const p = normalizar(texto).match(/[a-z0-9]+/g) || [];
+    return p.some(x => PALAVRAS_UNICAS.includes(x));
+  }
+
+  function bigramas(texto) {
+    // Pares de palavras consecutivas, sem remover stopwords: preservam a ordem
+    const p = normalizar(texto).match(/[a-z0-9]+/g) || [];
+    const s = new Set();
+    for (let i = 0; i < p.length - 1; i++) s.add(p[i] + " " + p[i + 1]);
+    return s;
+  }
+
+  function fracaoBigramas(afirmacao, texto) {
+    const ba = bigramas(afirmacao);
+    if (ba.size === 0) return 0;
+    const bt = bigramas(texto);
+    let comum = 0;
+    for (const b of ba) if (bt.has(b)) comum++;
+    return comum / ba.size;
+  }
+
+  // "X é Y": separa sujeito e predicado no primeiro verbo de ligação
+  function partir(texto) {
+    const m = texto.replace(/[.!?]+$/, "").match(/\s+(?:é|são|foi|foram|era|eram)\s+/i);
+    if (!m) return null;
+    return { sujeito: texto.slice(0, m.index), predicado: texto.slice(m.index + m[0].length) };
+  }
+
+  function julgarRelacao(afirmacao, evidencia) {
+    const c = partir(afirmacao), e = partir(evidencia);
+    if (!c || !e) return null;
+
+    // Mesma relação, na mesma direção ou invertida ("Brasília é a capital" = "A capital é Brasília")
+    const direto = escorar(c.sujeito, e.sujeito) >= 0.8 && escorar(c.predicado, e.predicado) >= 0.8;
+    const inverso = escorar(c.sujeito, e.predicado) >= 0.8 && escorar(c.predicado, e.sujeito) >= 0.8;
+    if (direto || inverso) {
+      // "foi ... até 1960" já encerrou: não sustenta uma afirmação no presente ("é")
+      const encerrado = /\sat[ée]\s/i.test(evidencia) && /\s(é|são)\s/i.test(afirmacao);
+      if (!encerrado) return "apoiada";
+      return temPalavraUnica(c.predicado) ? "refutada" : "sem evidência suficiente";
+    }
+
+    // Sujeito certo com predicado errado (ou o contrário), em algo único: contradição
+    const sujeitoBate = escorar(c.sujeito, e.sujeito) >= 0.8 || escorar(c.sujeito, e.predicado) >= 0.8;
+    const predicadoBate = escorar(c.predicado, e.predicado) >= 0.8 || escorar(c.predicado, e.sujeito) >= 0.8;
+    const unico = temPalavraUnica(c.predicado) || temPalavraUnica(e.predicado);
+    if (unico && sujeitoBate !== predicadoBate) return "refutada";
+
+    return "sem evidência suficiente";
+  }
+
   function julgar(afirmacao, evidencia, score) {
     const na = extrairNumeros(afirmacao);
     const nf = extrairNumeros(evidencia);
@@ -330,8 +390,13 @@
       const todos = na.every(v => nf.some(n => numeroBate(v, n)));
       return todos ? "apoiada" : "refutada";
     }
-    // Sem números: só aceita se quase todas as palavras batem
-    return score >= 0.8 ? "apoiada" : "sem evidência suficiente";
+    // "X é Y": a relação entre sujeito e predicado precisa bater, não só as palavras
+    const relacao = julgarRelacao(afirmacao, evidencia);
+    if (relacao) return relacao;
+    // Demais casos: palavras quase todas presentes e na mesma ordem
+    return score >= 0.8 && fracaoBigramas(afirmacao, evidencia) >= 0.5
+      ? "apoiada"
+      : "sem evidência suficiente";
   }
 
   function escorar(afirmacao, texto) {
